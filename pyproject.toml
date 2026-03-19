@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "zarr-imagecodecs"
+version = "0.1.0"
+description = "Zarr v3 image codecs (JPEG 2000, JPEG, JPEG XL, PNG, WebP, AVIF, TIFF) backed by Rust"
+requires-python = ">=3.11"
+license = "BSD-3-Clause"
+dependencies = [
+    "zarr>=3.0",
+    "numpy>=1.24",
+]
+
+[project.entry-points."zarr.codecs"]
+imagecodecs_jpeg2k = "zarr_imagecodecs:Jpeg2k"
+imagecodecs_jpeg = "zarr_imagecodecs:Jpeg"
+imagecodecs_jpegxl = "zarr_imagecodecs:Jpegxl"
+imagecodecs_png = "zarr_imagecodecs:Png"
+imagecodecs_webp = "zarr_imagecodecs:Webp"
+imagecodecs_avif = "zarr_imagecodecs:Avif"
+imagecodecs_tiff = "zarr_imagecodecs:Tiff"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "zarr_imagecodecs._zarr_imagecodecs"

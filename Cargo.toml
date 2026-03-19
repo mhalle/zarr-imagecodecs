@@ -1,0 +1,40 @@
+[package]
+name = "zarr-imagecodecs"
+version = "0.1.0"
+edition = "2021"
+description = "Zarr v3 image codecs backed by Rust"
+license = "BSD-3-Clause"
+
+[lib]
+name = "_zarr_imagecodecs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "0.23"
+
+# Image codecs - pure Rust
+png = "0.17"
+jpeg-decoder = "0.3"
+jpeg-encoder = "0.6"
+image-webp = "0.2"
+tiff = "0.9"
+jxl-oxide = "0.12"
+
+# JPEG 2000 - Rust port of OpenJPEG
+openjp2 = "0.6"
+
+# AVIF
+ravif = "0.11"
+avif-decode = "1"
+imgref = "1"
+
+[features]
+default = ["jpeg2k", "jpeg", "jpegxl", "png_codec", "webp", "avif", "tiff_codec"]
+jpeg2k = []
+jpeg = []
+jpegxl = []
+png_codec = []
+webp = []
+avif = []
+tiff_codec = []
