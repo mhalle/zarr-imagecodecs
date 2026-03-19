@@ -23,6 +23,7 @@ imagecodecs_avif = "zarr_imagecodecs:Avif"
 imagecodecs_tiff = "zarr_imagecodecs:Tiff"
 imagecodecs_jpegls = "zarr_imagecodecs:Jpegls"
 imagecodecs_packbits = "zarr_imagecodecs:Packbits"
+imagecodecs_dicom_rle = "zarr_imagecodecs:DicomRle"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

@@ -52,10 +52,19 @@ pub fn encode(data: &[u8]) -> Vec<u8> {
 
 /// PackBits decode: compressed bytes -> raw bytes.
 pub fn decode(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    decode_max(data, usize::MAX)
+}
+
+/// PackBits decode with a maximum output size.
+/// Stops after producing `max_output` bytes, ignoring any trailing data.
+pub fn decode_max(
+    data: &[u8],
+    max_output: usize,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let mut output = Vec::new();
     let mut i = 0;
 
-    while i < data.len() {
+    while i < data.len() && output.len() < max_output {
         let header = data[i] as i8;
         i += 1;
 

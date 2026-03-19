@@ -35,6 +35,8 @@ from zarr_imagecodecs._zarr_imagecodecs import (
     jpegls_encode,
     packbits_decode,
     packbits_encode,
+    dicom_rle_decode,
+    dicom_rle_encode,
 )
 
 from zarr.abc.codec import BytesBytesCodec
@@ -519,6 +521,105 @@ class Packbits(_BytesBytesBase):
 
         def _encode() -> bytes:
             return bytes(packbits_encode(chunk_bytes))
+
+        out = await asyncio.to_thread(_encode)
+        return chunk_spec.prototype.buffer.from_bytes(out)
+
+
+@dataclass(frozen=True)
+class DicomRle(_ImageCodec):
+    """DICOM RLE Lossless codec for zarr v3.
+
+    Implements DICOM Transfer Syntax 1.2.840.10008.1.2.5.
+    Uses PackBits encoding with DICOM's segment table header
+    and byte-plane decomposition for multi-byte samples.
+
+    Parameters
+    ----------
+    bytes_per_sample : int
+        Bytes per sample (1 for uint8, 2 for uint16). Default 1.
+    """
+
+    _codec_name: ClassVar[str] = 'imagecodecs_dicom_rle'
+
+    bytes_per_sample: int = 1
+
+    async def _decode_single(
+        self, chunk_data: Buffer, chunk_spec: ArraySpec
+    ) -> NDBuffer:
+        chunk_bytes = chunk_data.to_bytes()
+        shape = chunk_spec.shape
+        dtype = chunk_spec.dtype.to_native_dtype()
+
+        # Infer image dimensions from chunk shape
+        if len(shape) == 2:
+            height, width = shape
+            samples_per_pixel = 1
+        elif len(shape) == 3:
+            height, width = shape[0], shape[1]
+            samples_per_pixel = shape[2]
+        else:
+            raise ValueError(
+                f'DicomRle expects 2D or 3D chunks, got {len(shape)}D'
+            )
+
+        bps = dtype.itemsize
+        if self.bytes_per_sample != bps:
+            raise ValueError(
+                f'DicomRle bytes_per_sample={self.bytes_per_sample} '
+                f'does not match dtype {dtype} (itemsize={bps})'
+            )
+
+        def _decode() -> numpy.ndarray:
+            raw = bytes(dicom_rle_decode(
+                chunk_bytes,
+                width=width,
+                height=height,
+                samples_per_pixel=samples_per_pixel,
+                bytes_per_sample=bps,
+            ))
+            return numpy.frombuffer(raw, dtype=dtype)
+
+        out = await asyncio.to_thread(_decode)
+        return chunk_spec.prototype.nd_buffer.from_ndarray_like(
+            out.reshape(shape)
+        )
+
+    async def _encode_single(
+        self, chunk_data: NDBuffer, chunk_spec: ArraySpec
+    ) -> Buffer | None:
+        chunk_ndarray = numpy.ascontiguousarray(
+            chunk_data.as_ndarray_like()
+        )
+        shape = chunk_ndarray.shape
+        dtype = chunk_ndarray.dtype
+
+        if len(shape) == 2:
+            height, width = shape
+            samples_per_pixel = 1
+        elif len(shape) == 3:
+            height, width = shape[0], shape[1]
+            samples_per_pixel = shape[2]
+        else:
+            raise ValueError(
+                f'DicomRle expects 2D or 3D chunks, got {len(shape)}D'
+            )
+
+        bps = dtype.itemsize
+        if self.bytes_per_sample != bps:
+            raise ValueError(
+                f'DicomRle bytes_per_sample={self.bytes_per_sample} '
+                f'does not match dtype {dtype} (itemsize={bps})'
+            )
+
+        def _encode() -> bytes:
+            return bytes(dicom_rle_encode(
+                chunk_ndarray.tobytes(),
+                width=width,
+                height=height,
+                samples_per_pixel=samples_per_pixel,
+                bytes_per_sample=bps,
+            ))
 
         out = await asyncio.to_thread(_encode)
         return chunk_spec.prototype.buffer.from_bytes(out)

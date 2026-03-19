@@ -12,6 +12,7 @@ mod avif_codec;
 mod tiff_codec;
 mod jpegls;
 mod packbits;
+mod dicom_rle;
 
 #[pymodule]
 fn _zarr_imagecodecs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -33,6 +34,8 @@ fn _zarr_imagecodecs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(jpegls_decode, m)?)?;
     m.add_function(wrap_pyfunction!(packbits_encode, m)?)?;
     m.add_function(wrap_pyfunction!(packbits_decode, m)?)?;
+    m.add_function(wrap_pyfunction!(dicom_rle_encode, m)?)?;
+    m.add_function(wrap_pyfunction!(dicom_rle_decode, m)?)?;
     Ok(())
 }
 
@@ -351,6 +354,42 @@ fn packbits_decode<'py>(
 ) -> PyResult<Bound<'py, PyBytes>> {
     let buf = data.as_bytes();
     let decoded = packbits::decode(buf)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    Ok(PyBytes::new(py, &decoded))
+}
+
+// ---------------------------------------------------------------------------
+// DICOM RLE
+// ---------------------------------------------------------------------------
+
+#[pyfunction]
+#[pyo3(signature = (data, *, width, height, samples_per_pixel=1, bytes_per_sample=1))]
+fn dicom_rle_encode<'py>(
+    py: Python<'py>,
+    data: &Bound<'py, PyBytes>,
+    width: usize,
+    height: usize,
+    samples_per_pixel: usize,
+    bytes_per_sample: usize,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let buf = data.as_bytes();
+    let encoded = dicom_rle::encode(buf, width, height, samples_per_pixel, bytes_per_sample)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    Ok(PyBytes::new(py, &encoded))
+}
+
+#[pyfunction]
+#[pyo3(signature = (data, *, width, height, samples_per_pixel=1, bytes_per_sample=1))]
+fn dicom_rle_decode<'py>(
+    py: Python<'py>,
+    data: &Bound<'py, PyBytes>,
+    width: usize,
+    height: usize,
+    samples_per_pixel: usize,
+    bytes_per_sample: usize,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let buf = data.as_bytes();
+    let decoded = dicom_rle::decode(buf, width, height, samples_per_pixel, bytes_per_sample)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     Ok(PyBytes::new(py, &decoded))
 }
