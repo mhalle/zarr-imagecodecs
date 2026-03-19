@@ -1,28 +1,39 @@
+use jpeg2k::ImagePixelData;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Generate a unique temp file path (thread-safe).
+fn temp_path(ext: &str) -> std::path::PathBuf {
+    let id = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "zarr_j2k_{}_{}.{}",
+        std::process::id(),
+        id,
+        ext
+    ))
+}
+
 pub fn encode(
     data: &[u8],
     shape: &[usize],
-    _level: Option<f32>,
-    _reversible: bool,
-    _num_resolutions: Option<u32>,
+    level: Option<f32>,
+    reversible: bool,
+    num_resolutions: Option<u32>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let (height, width, components) = parse_image_shape(shape)?;
 
     let mut params = openjp2::opj_cparameters::default();
 
-    if _reversible {
-        params.irreversible = 0;
-    } else {
-        params.irreversible = 1;
-    }
-
+    params.irreversible = if reversible { 0 } else { 1 };
     params.tcp_numlayers = 1;
     params.cp_disto_alloc = 1;
 
-    if let Some(q) = _level {
+    if let Some(q) = level {
         params.tcp_rates[0] = q;
     }
 
-    if let Some(nr) = _num_resolutions {
+    if let Some(nr) = num_resolutions {
         params.numresolution = nr as i32;
     }
 
@@ -59,7 +70,7 @@ pub fn encode(
     image.x1 = width as u32;
     image.y1 = height as u32;
 
-    // Fill component data (interleaved -> planar)
+    // Interleaved -> planar component data
     for c in 0..num_comps as usize {
         let comp = unsafe { &mut *image.comps.add(c) };
         if let Some(comp_data) = comp.data_mut() {
@@ -69,15 +80,11 @@ pub fn encode(
         }
     }
 
-    // Write to temp file since Stream requires file paths
-    let tmp_path = std::env::temp_dir().join(format!(
-        "zarr_j2k_enc_{}.j2k",
-        std::process::id()
-    ));
+    // Encode via temp file (openjp2 Stream requires file paths)
+    let tmp_path = temp_path("j2k");
 
     let mut stream =
         openjp2::Stream::new_file(&tmp_path, 1024 * 1024, false)?;
-
     let mut codec =
         openjp2::Codec::new_encoder(openjp2::CODEC_FORMAT::OPJ_CODEC_J2K)
             .ok_or("failed to create encoder")?;
@@ -94,48 +101,27 @@ pub fn encode(
 }
 
 pub fn decode(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    // Write to temp file since Stream requires file paths
-    let tmp_path = std::env::temp_dir().join(format!(
-        "zarr_j2k_dec_{}.j2k",
-        std::process::id()
-    ));
-    std::fs::write(&tmp_path, data)?;
+    // Use jpeg2k crate for clean in-memory decode
+    let image = jpeg2k::Image::from_bytes(data)
+        .map_err(|e| format!("JPEG 2000 decode failed: {e}"))?;
 
-    let mut stream =
-        openjp2::Stream::new_file(&tmp_path, 1024 * 1024, true)?;
+    let img_data = image
+        .get_pixels(None)
+        .map_err(|e| format!("JPEG 2000 pixel extraction failed: {e}"))?;
 
-    let mut codec =
-        openjp2::Codec::new_decoder(openjp2::CODEC_FORMAT::OPJ_CODEC_J2K)
-            .ok_or("failed to create decoder")?;
-
-    let mut params = openjp2::opj_dparameters::default();
-    codec.setup_decoder(&mut params);
-
-    let mut image = codec
-        .read_header(&mut stream)
-        .ok_or("failed to read header")?;
-
-    codec.decode(&mut stream, &mut image);
-    codec.end_decompress(&mut stream);
-    drop(stream);
-    let _ = std::fs::remove_file(&tmp_path);
-
-    let width = (image.x1 - image.x0) as usize;
-    let height = (image.y1 - image.y0) as usize;
-    let num_comps = image.numcomps as usize;
-
-    // Planar -> interleaved
-    let mut pixels = vec![0u8; width * height * num_comps];
-    for c in 0..num_comps {
-        let comp = unsafe { &*image.comps.add(c) };
-        if let Some(comp_data) = comp.data() {
-            for i in 0..(width * height) {
-                pixels[i * num_comps + c] = comp_data[i].clamp(0, 255) as u8;
-            }
+    match img_data.data {
+        ImagePixelData::L8(buf) => Ok(buf),
+        ImagePixelData::La8(buf) => Ok(buf),
+        ImagePixelData::Rgb8(buf) => Ok(buf),
+        ImagePixelData::Rgba8(buf) => Ok(buf),
+        ImagePixelData::L16(buf) => {
+            Ok(buf.iter().map(|&v| (v >> 8) as u8).collect())
         }
+        ImagePixelData::Rgb16(buf) => {
+            Ok(buf.iter().map(|&v| (v >> 8) as u8).collect())
+        }
+        _ => Err("unsupported JPEG 2000 pixel format".into()),
     }
-
-    Ok(pixels)
 }
 
 fn parse_image_shape(

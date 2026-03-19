@@ -23,6 +23,11 @@ jxl-oxide = "0.12"
 
 # JPEG 2000 - Rust port of OpenJPEG
 openjp2 = "0.6"
+jpeg2k = "0.10"
+
+# JPEG XL encoding (pure Rust, lossless)
+zune-jpegxl = "0.5"
+zune-core = "0.5"
 
 # AVIF
 ravif = "0.11"

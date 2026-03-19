@@ -19,6 +19,7 @@ fn _zarr_imagecodecs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(jpeg2k_decode, m)?)?;
     m.add_function(wrap_pyfunction!(jpeg_encode, m)?)?;
     m.add_function(wrap_pyfunction!(jpeg_decode, m)?)?;
+    m.add_function(wrap_pyfunction!(jpegxl_encode, m)?)?;
     m.add_function(wrap_pyfunction!(jpegxl_decode, m)?)?;
     m.add_function(wrap_pyfunction!(png_encode, m)?)?;
     m.add_function(wrap_pyfunction!(png_decode, m)?)?;
@@ -112,6 +113,23 @@ fn jpeg_decode<'py>(
 // ---------------------------------------------------------------------------
 // JPEG XL (decode only - pure Rust via jxl-oxide)
 // ---------------------------------------------------------------------------
+
+#[pyfunction]
+#[pyo3(signature = (data, *, effort=None))]
+fn jpegxl_encode<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArrayDyn<'py, u8>,
+    effort: Option<u8>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let array = data.as_array();
+    let shape: Vec<usize> = array.shape().to_vec();
+    let buf = array.as_slice().ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err("array must be contiguous")
+    })?;
+    let encoded = jpegxl::encode(buf, &shape, effort)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    Ok(PyBytes::new(py, &encoded))
+}
 
 #[pyfunction]
 #[pyo3(signature = (data, shape))]

@@ -24,6 +24,7 @@ from zarr_imagecodecs._zarr_imagecodecs import (
     jpeg_decode,
     jpeg_encode,
     jpegxl_decode,
+    jpegxl_encode,
     png_decode,
     png_encode,
     tiff_decode,
@@ -182,13 +183,20 @@ class Jpeg(_ImageCodec):
 
 @dataclass(frozen=True)
 class Jpegxl(_ImageCodec):
-    """JPEG XL codec for zarr v3 (decode only).
+    """JPEG XL codec for zarr v3.
 
-    Decoding uses pure-Rust jxl-oxide. Encoding is not yet
-    available in pure Rust.
+    Encoding uses pure-Rust zune-jpegxl (lossless only).
+    Decoding uses pure-Rust jxl-oxide.
+
+    Parameters
+    ----------
+    effort : int, optional
+        Encoding effort (higher = slower + smaller).
     """
 
     _codec_name: ClassVar[str] = 'imagecodecs_jpegxl'
+
+    effort: int | None = None
 
     async def _decode_single(
         self, chunk_data: Buffer, chunk_spec: ArraySpec
@@ -207,10 +215,17 @@ class Jpegxl(_ImageCodec):
     async def _encode_single(
         self, chunk_data: NDBuffer, chunk_spec: ArraySpec
     ) -> Buffer | None:
-        raise NotImplementedError(
-            'JPEG XL encoding not yet available in pure Rust. '
-            'Use imagecodecs for encoding.'
+        chunk_ndarray = numpy.ascontiguousarray(
+            _squeeze_image(chunk_data.as_ndarray_like())
         )
+
+        def _encode() -> bytes:
+            return bytes(jpegxl_encode(
+                chunk_ndarray, effort=self.effort
+            ))
+
+        out = await asyncio.to_thread(_encode)
+        return chunk_spec.prototype.buffer.from_bytes(out)
 
 
 @dataclass(frozen=True)
