@@ -38,6 +38,9 @@ imgref = "1"
 charls = "0.4"
 charls-sys = "2.4"
 
+[build-dependencies]
+cc = "1"
+
 [features]
 default = ["jpeg2k", "jpeg", "jpegxl", "png_codec", "webp", "avif", "tiff_codec", "jpegls", "packbits"]
 jpeg2k = []

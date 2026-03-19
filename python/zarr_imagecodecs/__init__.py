@@ -24,6 +24,7 @@ Usage::
 from zarr_imagecodecs._codecs import (
     Avif,
     DicomRle,
+    Htj2k,
     Jpeg,
     Jpeg2k,
     Jpegls,
@@ -37,6 +38,7 @@ from zarr_imagecodecs._codecs import (
 __all__ = [
     'Avif',
     'DicomRle',
+    'Htj2k',
     'Jpeg',
     'Jpeg2k',
     'Jpegls',

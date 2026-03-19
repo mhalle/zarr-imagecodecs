@@ -37,6 +37,8 @@ from zarr_imagecodecs._zarr_imagecodecs import (
     packbits_encode,
     dicom_rle_decode,
     dicom_rle_encode,
+    htj2k_decode,
+    htj2k_encode,
 )
 
 from zarr.abc.codec import BytesBytesCodec
@@ -619,6 +621,66 @@ class DicomRle(_ImageCodec):
                 height=height,
                 samples_per_pixel=samples_per_pixel,
                 bytes_per_sample=bps,
+            ))
+
+        out = await asyncio.to_thread(_encode)
+        return chunk_spec.prototype.buffer.from_bytes(out)
+
+
+@dataclass(frozen=True)
+class Htj2k(_ImageCodec):
+    """High-Throughput JPEG 2000 (HTJ2K) codec for zarr v3.
+
+    Implements DICOM Transfer Syntaxes:
+    - 1.2.840.10008.1.2.4.201 (HTJ2K Lossless Only)
+    - 1.2.840.10008.1.2.4.202 (HTJ2K Lossless RPCL)
+    - 1.2.840.10008.1.2.4.203 (HTJ2K)
+
+    Backed by OpenJPH.
+
+    Parameters
+    ----------
+    reversible : bool
+        Use reversible (lossless) transform. Default True.
+    quant_step : float, optional
+        Quantization step for lossy mode (ignored if reversible).
+    num_decomps : int, optional
+        Number of wavelet decomposition levels. Default 5.
+    """
+
+    _codec_name: ClassVar[str] = 'imagecodecs_htj2k'
+
+    reversible: bool = True
+    quant_step: float | None = None
+    num_decomps: int | None = None
+
+    async def _decode_single(
+        self, chunk_data: Buffer, chunk_spec: ArraySpec
+    ) -> NDBuffer:
+        chunk_bytes = chunk_data.to_bytes()
+        shape = list(chunk_spec.shape)
+
+        def _decode() -> numpy.ndarray:
+            return numpy.asarray(htj2k_decode(chunk_bytes, shape))
+
+        out = await asyncio.to_thread(_decode)
+        return chunk_spec.prototype.nd_buffer.from_ndarray_like(
+            out.reshape(chunk_spec.shape)
+        )
+
+    async def _encode_single(
+        self, chunk_data: NDBuffer, chunk_spec: ArraySpec
+    ) -> Buffer | None:
+        chunk_ndarray = numpy.ascontiguousarray(
+            _squeeze_image(chunk_data.as_ndarray_like())
+        )
+
+        def _encode() -> bytes:
+            return bytes(htj2k_encode(
+                chunk_ndarray,
+                reversible=self.reversible,
+                quant_step=self.quant_step,
+                num_decomps=self.num_decomps,
             ))
 
         out = await asyncio.to_thread(_encode)

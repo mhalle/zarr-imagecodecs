@@ -13,6 +13,7 @@ mod tiff_codec;
 mod jpegls;
 mod packbits;
 mod dicom_rle;
+mod htj2k;
 
 #[pymodule]
 fn _zarr_imagecodecs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -36,6 +37,8 @@ fn _zarr_imagecodecs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(packbits_decode, m)?)?;
     m.add_function(wrap_pyfunction!(dicom_rle_encode, m)?)?;
     m.add_function(wrap_pyfunction!(dicom_rle_decode, m)?)?;
+    m.add_function(wrap_pyfunction!(htj2k_encode, m)?)?;
+    m.add_function(wrap_pyfunction!(htj2k_decode, m)?)?;
     Ok(())
 }
 
@@ -392,4 +395,42 @@ fn dicom_rle_decode<'py>(
     let decoded = dicom_rle::decode(buf, width, height, samples_per_pixel, bytes_per_sample)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
     Ok(PyBytes::new(py, &decoded))
+}
+
+// ---------------------------------------------------------------------------
+// HTJ2K (High-Throughput JPEG 2000)
+// ---------------------------------------------------------------------------
+
+#[pyfunction]
+#[pyo3(signature = (data, *, reversible=true, quant_step=None, num_decomps=None))]
+fn htj2k_encode<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArrayDyn<'py, u8>,
+    reversible: bool,
+    quant_step: Option<f32>,
+    num_decomps: Option<u32>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let array = data.as_array();
+    let shape: Vec<usize> = array.shape().to_vec();
+    let buf = array.as_slice().ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err("array must be contiguous")
+    })?;
+    let encoded = htj2k::encode(buf, &shape, reversible, quant_step, num_decomps)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    Ok(PyBytes::new(py, &encoded))
+}
+
+#[pyfunction]
+#[pyo3(signature = (data, shape))]
+fn htj2k_decode<'py>(
+    py: Python<'py>,
+    data: &Bound<'py, PyBytes>,
+    shape: Vec<usize>,
+) -> PyResult<Bound<'py, PyArrayDyn<u8>>> {
+    let buf = data.as_bytes();
+    let decoded = htj2k::decode(buf)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    let arr = ArrayD::from_shape_vec(IxDyn(&shape), decoded)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(arr.into_pyarray(py))
 }

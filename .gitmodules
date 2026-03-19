@@ -1,0 +1,3 @@
+[submodule "vendor/openjph"]
+	path = vendor/openjph
+	url = https://github.com/aous72/OpenJPH.git

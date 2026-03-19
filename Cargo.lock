@@ -1593,6 +1593,7 @@ name = "zarr-imagecodecs"
 version = "0.1.0"
 dependencies = [
  "avif-decode",
+ "cc",
  "charls",
  "charls-sys",
  "image-webp",
