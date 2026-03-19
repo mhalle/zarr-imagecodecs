@@ -30,7 +30,13 @@ from zarr_imagecodecs._zarr_imagecodecs import (
     tiff_encode,
     webp_decode,
     webp_encode,
+    jpegls_decode,
+    jpegls_encode,
+    packbits_decode,
+    packbits_encode,
 )
+
+from zarr.abc.codec import BytesBytesCodec
 
 
 # --- Base class ---
@@ -387,6 +393,117 @@ class Tiff(_ImageCodec):
                 chunk_ndarray,
                 compression=self.compression,
             ))
+
+        out = await asyncio.to_thread(_encode)
+        return chunk_spec.prototype.buffer.from_bytes(out)
+
+
+@dataclass(frozen=True)
+class Jpegls(_ImageCodec):
+    """JPEG-LS codec for zarr v3.
+
+    Parameters
+    ----------
+    near : int
+        Near-lossless tolerance. 0 = lossless (default).
+    """
+
+    _codec_name: ClassVar[str] = 'imagecodecs_jpegls'
+
+    near: int = 0
+
+    async def _decode_single(
+        self, chunk_data: Buffer, chunk_spec: ArraySpec
+    ) -> NDBuffer:
+        chunk_bytes = chunk_data.to_bytes()
+        shape = list(chunk_spec.shape)
+
+        def _decode() -> numpy.ndarray:
+            return numpy.asarray(jpegls_decode(chunk_bytes, shape))
+
+        out = await asyncio.to_thread(_decode)
+        return chunk_spec.prototype.nd_buffer.from_ndarray_like(
+            out.reshape(chunk_spec.shape)
+        )
+
+    async def _encode_single(
+        self, chunk_data: NDBuffer, chunk_spec: ArraySpec
+    ) -> Buffer | None:
+        # JPEG-LS needs the original shape (H, W) or (H, W, C)
+        chunk_ndarray = numpy.ascontiguousarray(
+            chunk_data.as_ndarray_like()
+        )
+
+        def _encode() -> bytes:
+            return bytes(jpegls_encode(chunk_ndarray, near=self.near))
+
+        out = await asyncio.to_thread(_encode)
+        return chunk_spec.prototype.buffer.from_bytes(out)
+
+
+@dataclass(frozen=True)
+class _BytesBytesBase(BytesBytesCodec):
+    """Base class for bytes-to-bytes codecs."""
+
+    _codec_name: ClassVar[str]
+    is_fixed_size: ClassVar[bool] = False
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        if isinstance(data, str):
+            return cls()
+        if 'name' in data and 'configuration' in data:
+            config = dict(data['configuration'])
+        else:
+            config = {k: v for k, v in data.items() if k != 'name'}
+        known = {f.name for f in fields(cls) if not f.name.startswith('_')}
+        config = {k: v for k, v in config.items() if k in known}
+        return cls(**config)
+
+    def to_dict(self) -> dict[str, Any]:
+        config = {}
+        for f in fields(self):
+            if f.name.startswith('_'):
+                continue
+            val = getattr(self, f.name)
+            if val is not None:
+                config[f.name] = val
+        return {'name': self._codec_name, 'configuration': config}
+
+    def compute_encoded_size(
+        self, input_byte_length: int, chunk_spec: ArraySpec
+    ) -> int:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class Packbits(_BytesBytesBase):
+    """PackBits (RLE) codec for zarr v3.
+
+    Standard TIFF/Apple PackBits algorithm, also used for
+    DICOM RLE transfer syntax.
+    """
+
+    _codec_name: ClassVar[str] = 'imagecodecs_packbits'
+
+    async def _decode_single(
+        self, chunk_data: Buffer, chunk_spec: ArraySpec
+    ) -> Buffer:
+        chunk_bytes = chunk_data.to_bytes()
+
+        def _decode() -> bytes:
+            return bytes(packbits_decode(chunk_bytes))
+
+        out = await asyncio.to_thread(_decode)
+        return chunk_spec.prototype.buffer.from_bytes(out)
+
+    async def _encode_single(
+        self, chunk_data: Buffer, chunk_spec: ArraySpec
+    ) -> Buffer:
+        chunk_bytes = chunk_data.to_bytes()
+
+        def _encode() -> bytes:
+            return bytes(packbits_encode(chunk_bytes))
 
         out = await asyncio.to_thread(_encode)
         return chunk_spec.prototype.buffer.from_bytes(out)

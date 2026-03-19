@@ -10,6 +10,8 @@ mod png_codec;
 mod webp;
 mod avif_codec;
 mod tiff_codec;
+mod jpegls;
+mod packbits;
 
 #[pymodule]
 fn _zarr_imagecodecs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -26,6 +28,10 @@ fn _zarr_imagecodecs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_avif, m)?)?;
     m.add_function(wrap_pyfunction!(tiff_encode, m)?)?;
     m.add_function(wrap_pyfunction!(tiff_decode, m)?)?;
+    m.add_function(wrap_pyfunction!(jpegls_encode, m)?)?;
+    m.add_function(wrap_pyfunction!(jpegls_decode, m)?)?;
+    m.add_function(wrap_pyfunction!(packbits_encode, m)?)?;
+    m.add_function(wrap_pyfunction!(packbits_decode, m)?)?;
     Ok(())
 }
 
@@ -266,4 +272,67 @@ fn tiff_decode<'py>(
     let arr = ArrayD::from_shape_vec(IxDyn(&shape), decoded)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(arr.into_pyarray(py))
+}
+
+// ---------------------------------------------------------------------------
+// JPEG-LS
+// ---------------------------------------------------------------------------
+
+#[pyfunction]
+#[pyo3(signature = (data, *, near=0))]
+fn jpegls_encode<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArrayDyn<'py, u8>,
+    near: i32,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let array = data.as_array();
+    let shape: Vec<usize> = array.shape().to_vec();
+    let buf = array.as_slice().ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err("array must be contiguous")
+    })?;
+    let encoded = jpegls::encode(buf, &shape, near)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    Ok(PyBytes::new(py, &encoded))
+}
+
+#[pyfunction]
+#[pyo3(signature = (data, shape))]
+fn jpegls_decode<'py>(
+    py: Python<'py>,
+    data: &Bound<'py, PyBytes>,
+    shape: Vec<usize>,
+) -> PyResult<Bound<'py, PyArrayDyn<u8>>> {
+    let buf = data.as_bytes();
+    let decoded = jpegls::decode(buf)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    let arr = ArrayD::from_shape_vec(IxDyn(&shape), decoded)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(arr.into_pyarray(py))
+}
+
+// ---------------------------------------------------------------------------
+// PackBits (RLE)
+// ---------------------------------------------------------------------------
+
+#[pyfunction]
+#[pyo3(signature = (data,))]
+fn packbits_encode<'py>(
+    py: Python<'py>,
+    data: &Bound<'py, PyBytes>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let buf = data.as_bytes();
+    let encoded = packbits::encode(buf);
+    Ok(PyBytes::new(py, &encoded))
+}
+
+#[pyfunction]
+#[pyo3(signature = (data,))]
+fn packbits_decode<'py>(
+    py: Python<'py>,
+    data: &Bound<'py, PyBytes>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let buf = data.as_bytes();
+    let decoded = packbits::decode(buf)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    Ok(PyBytes::new(py, &decoded))
 }
