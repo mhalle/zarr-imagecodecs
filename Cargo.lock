@@ -1594,6 +1594,7 @@ version = "0.1.0"
 dependencies = [
  "avif-decode",
  "charls",
+ "charls-sys",
  "image-webp",
  "imgref",
  "jpeg-decoder",

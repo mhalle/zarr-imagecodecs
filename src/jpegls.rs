@@ -1,5 +1,4 @@
-use charls::CharLS;
-use charls::FrameInfo;
+use charls::{CharLS, FrameInfo, InterleaveMode};
 
 pub fn encode(
     data: &[u8],
@@ -12,7 +11,7 @@ pub fn encode(
         width: width as u32,
         height: height as u32,
         bits_per_sample: 8,
-        component_count: 1,
+        component_count: components as i32,
     };
 
     if components == 1 {
@@ -20,79 +19,126 @@ pub fn encode(
         return Ok(codec.encode(frame_info, near, data)?);
     }
 
-    // Multi-component: encode each plane separately, then concatenate
-    // with a header: [num_components(u8), len0(u32le), data0, len1(u32le), data1, ...]
-    let plane_size = width * height;
-    let mut output = Vec::new();
-    output.push(components as u8);
+    // Multi-component: use charls-sys directly with a generous buffer
+    unsafe {
+        let encoder = charls_sys::charls_jpegls_encoder_create();
+        if encoder.is_null() {
+            return Err("failed to create JPEG-LS encoder".into());
+        }
+        let _guard = EncoderGuard(encoder);
 
-    for c in 0..components {
-        let plane_info = FrameInfo {
+        let fi = charls_sys::charls_frame_info {
             width: width as u32,
             height: height as u32,
             bits_per_sample: 8,
-            component_count: 1,
+            component_count: components as i32,
         };
 
-        // Extract plane from interleaved data
-        let plane: Vec<u8> = (0..plane_size)
-            .map(|i| data[i * components + c])
-            .collect();
+        check_err(charls_sys::charls_jpegls_encoder_set_frame_info(
+            encoder, &fi,
+        ))?;
 
-        let mut codec = CharLS::default();
-        let compressed = codec.encode(plane_info, near, &plane)?;
+        check_err(charls_sys::charls_jpegls_encoder_set_interleave_mode(
+            encoder,
+            charls_sys::charls_interleave_mode_sample,
+        ))?;
 
-        // Write length as u32 LE, then data
-        output.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
-        output.extend_from_slice(&compressed);
+        check_err(charls_sys::charls_jpegls_encoder_set_near_lossless(
+            encoder, near,
+        ))?;
+
+        let buf_size = data.len() * 2 + 1024;
+        let mut dst = vec![0u8; buf_size];
+
+        check_err(charls_sys::charls_jpegls_encoder_set_destination_buffer(
+            encoder,
+            dst.as_mut_ptr() as *mut std::ffi::c_void,
+            buf_size,
+        ))?;
+
+        let mut src = data.to_vec();
+        check_err(charls_sys::charls_jpegls_encoder_encode_from_buffer(
+            encoder,
+            src.as_mut_ptr() as *mut std::ffi::c_void,
+            src.len(),
+            0,
+        ))?;
+
+        let mut bytes_written: usize = 0;
+        check_err(charls_sys::charls_jpegls_encoder_get_bytes_written(
+            encoder,
+            &mut bytes_written,
+        ))?;
+
+        dst.truncate(bytes_written);
+        Ok(dst)
     }
-
-    Ok(output)
 }
 
 pub fn decode(data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    // Check if this is our multi-plane format or a standard JPEG-LS stream
-    // Standard JPEG-LS starts with FF D8 (SOI marker)
-    if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
-        // Standard single-component JPEG-LS
-        let mut codec = CharLS::default();
-        return Ok(codec.decode(data)?);
-    }
-
-    // Multi-plane format: [num_components(u8), len0(u32le), data0, ...]
-    let components = data[0] as usize;
-    let mut offset = 1;
-    let mut planes: Vec<Vec<u8>> = Vec::new();
-
-    for _ in 0..components {
-        if offset + 4 > data.len() {
-            return Err("truncated JPEG-LS multi-plane data".into());
+    // Use charls-sys directly for all decode paths
+    unsafe {
+        let decoder = charls_sys::charls_jpegls_decoder_create();
+        if decoder.is_null() {
+            return Err("failed to create JPEG-LS decoder".into());
         }
-        let len = u32::from_le_bytes(
-            data[offset..offset + 4].try_into().unwrap(),
-        ) as usize;
-        offset += 4;
+        let _guard = DecoderGuard(decoder);
 
-        if offset + len > data.len() {
-            return Err("truncated JPEG-LS plane data".into());
-        }
+        check_err(charls_sys::charls_jpegls_decoder_set_source_buffer(
+            decoder,
+            data.as_ptr() as *const std::ffi::c_void,
+            data.len(),
+        ))?;
 
-        let mut codec = CharLS::default();
-        let plane = codec.decode(&data[offset..offset + len])?;
-        planes.push(plane);
-        offset += len;
+        check_err(charls_sys::charls_jpegls_decoder_read_header(decoder))?;
+
+        // Get destination size
+        let mut dest_size: usize = 0;
+        check_err(
+            charls_sys::charls_jpegls_decoder_get_destination_size(
+                decoder,
+                0, // stride
+                &mut dest_size,
+            ),
+        )?;
+
+        let mut dst = vec![0u8; dest_size];
+        check_err(
+            charls_sys::charls_jpegls_decoder_decode_to_buffer(
+                decoder,
+                dst.as_mut_ptr() as *mut std::ffi::c_void,
+                dest_size,
+                0, // stride
+            ),
+        )?;
+
+        Ok(dst)
     }
+}
 
-    // Re-interleave planes
-    let plane_size = planes[0].len();
-    let mut interleaved = vec![0u8; plane_size * components];
-    for c in 0..components {
-        for i in 0..plane_size {
-            interleaved[i * components + c] = planes[c][i];
-        }
+// RAII guards
+struct EncoderGuard(*mut charls_sys::charls_jpegls_encoder);
+impl Drop for EncoderGuard {
+    fn drop(&mut self) {
+        unsafe { charls_sys::charls_jpegls_encoder_destroy(self.0); }
     }
+}
 
-    Ok(interleaved)
+struct DecoderGuard(*mut charls_sys::charls_jpegls_decoder);
+impl Drop for DecoderGuard {
+    fn drop(&mut self) {
+        unsafe { charls_sys::charls_jpegls_decoder_destroy(self.0); }
+    }
+}
+
+fn check_err(
+    err: charls_sys::charls_jpegls_errc,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if err == 0 {
+        Ok(())
+    } else {
+        Err(format!("JPEG-LS error code: {}", err).into())
+    }
 }
 
 fn parse_image_shape(

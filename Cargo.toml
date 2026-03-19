@@ -36,6 +36,7 @@ imgref = "1"
 
 # JPEG-LS (vendors CharLS C++ source)
 charls = "0.4"
+charls-sys = "2.4"
 
 [features]
 default = ["jpeg2k", "jpeg", "jpegxl", "png_codec", "webp", "avif", "tiff_codec", "jpegls", "packbits"]
